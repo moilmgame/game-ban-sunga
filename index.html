@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trò Chơi Bắn Súng Sinh Tồn</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #111; color: white; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        
+        #game-container { position: relative; width: 100vw; height: 100vh; }
+        canvas { display: block; background: #1e272e; cursor: crosshair; }
+
+        /* Giao diện HUD */
+        #hud { position: absolute; top: 20px; left: 20px; pointer-events: none; font-size: 1.2rem; font-weight: bold; text-shadow: 2px 2px 4px rgba(0,0,0,0.8); }
+        .hud-row { margin-bottom: 8px; }
+        
+        /* Màn hình thông báo / Menu */
+        .screen { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0, 0, 0, 0.85); z-index: 10; }
+        .hidden { display: none !important; }
+        
+        h1 { font-size: 3.5rem; color: #e74c3c; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 2px; text-shadow: 0 0 20px rgba(231, 76, 60, 0.6); }
+        p { font-size: 1.1rem; color: #bdc3c7; margin-bottom: 25px; text-align: center; max-width: 500px; line-height: 1.6; }
+        
+        .primary-btn { padding: 14px 35px; font-size: 1.2rem; font-weight: bold; background: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer; transition: 0.2s; text-transform: uppercase; box-shadow: 0 5px 15px rgba(231, 76, 60, 0.4); }
+        .primary-btn:hover { background: #c0392b; transform: translateY(-2px); }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="hud">
+            <div class="hud-row">❤️ Máu: <span id="hp-text">100</span> / 100</div>
+            <div class="hud-row">🎯 Điểm Số: <span id="score-text">0</span></div>
+            <div class="hud-row">🔫 Đạn: <span id="ammo-text">30</span> / 30 (Nhấn R nạp đạn)</div>
+        </div>
+
+        <!-- MÀN HÌNH BẮT ĐẦU -->
+        <div id="start-screen" class="screen">
+            <h1>Sinh Tồn Bắn Súng</h1>
+            <p>Di chuyển bằng phím <b>WASD</b>.<br>Xoay hướng và bấm <b>Chuột Trái</b> để bắn.<br>Nhấn phím <b>R</b> để nạp lại đạn (Reload). Tiêu diệt càng nhiều thây ma càng tốt!</p>
+            <button class="primary-btn" onclick="startGame()">Bắt Đầu Chơi</button>
+        </div>
+
+        <!-- MÀN HÌNH KẾT THÚC -->
+        <div id="gameover-screen" class="screen hidden">
+            <h1 style="color: #f1c40f;">BẠN ĐÃ THẤT BẠI</h1>
+            <p id="final-score" style="font-size: 1.4rem; color: white;">Điểm đạt được: 0</p>
+            <button class="primary-btn" onclick="startGame()">Chơi Lại Ngay</button>
+        </div>
+    </div>
+
+<script>
+let canvas, ctx;
+let gameState = 'START'; // START, PLAYING, GAMEOVER
+let score = 0;
+let keys = {};
+let mouse = { x: 0, y: 0, down: false };
+
+let player = {
+    x: 0, y: 0,
+    radius: 20,
+    speed: 4,
+    hp: 100,
+    maxHp: 100,
+    ammo: 30,
+    maxAmmo: 30,
+    isReloading: false
+};
+
+let bullets = [];
+let zombies = [];
+let particles = [];
+let zombieSpawnTimer = 0;
+
+function init() {
+    canvas = document.getElementById('gameCanvas');
+    ctx = canvas.getContext('2d');
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    window.addEventListener('keydown', e => {
+        keys[e.key.toLowerCase()] = true;
+        if (e.key.toLowerCase() === 'r') reloadWeapon();
+    });
+    window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+    canvas.addEventListener('mousemove', e => {
+        const rect = canvas.getBoundingClientRect();
+        mouse.x = e.clientX - rect.left;
+        mouse.y = e.clientY - rect.top;
+    });
+    canvas.addEventListener('mousedown', () => { mouse.down = true; });
+    canvas.addEventListener('mouseup', () => { mouse.down = false; });
+}
+
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+
+function startGame() {
+    document.getElementById('start-screen').classList.add('hidden');
+    document.getElementById('gameover-screen').classList.add('hidden');
+    
+    player.x = canvas.width / 2;
+    player.y = canvas.height / 2;
+    player.hp = player.maxHp;
+    player.ammo = player.maxAmmo;
+    score = 0;
+    bullets = [];
+    zombies = [];
+    particles = [];
+    zombieSpawnTimer = 0;
+    gameState = 'PLAYING';
+    
+    updateHUD();
+    requestAnimationFrame(gameLoop);
+}
+
+function reloadWeapon() {
+    if (player.isReloading || player.ammo === player.maxAmmo) return;
+    player.isReloading = true;
+    setTimeout(() => {
+        player.ammo = player.maxAmmo;
+        player.isReloading = false;
+        updateHUD();
+    }, 1200);
+}
+
+function updateHUD() {
+    document.getElementById('hp-text').innerText = player.hp;
+    document.getElementById('score-text').innerText = score;
+    document.getElementById('ammo-text').innerText = player.isReloading ? 'Đang nạp...' : player.ammo;
+}
+
+let lastShootTime = 0;
+function update() {
+    if (gameState !== 'PLAYING') return;
+
+    // Di chuyển người chơi (WASD)
+    let dx = 0, dy = 0;
+    if (keys['w'] || keys['arrowup']) dy -= 1;
+    if (keys['s'] || keys['arrowdown']) dy += 1;
+    if (keys['a'] || keys['arrowleft']) dx -= 1;
+    if (keys['d'] || keys['arrowright']) dx += 1;
+
+    if (dx !== 0 && dy !== 0) {
+        dx *= 0.7071; dy *= 0.7071; // Cân bằng tốc độ khi đi chéo
+    }
+    player.x += dx * player.speed;
+    player.y += dy * player.speed;
+
+    // Giới hạn trong màn hình
+    player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+    player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+
+    // Bắn đạn
+    if (mouse.down && !player.isReloading && Date.now() - lastShootTime > 150) {
+        if (player.ammo > 0) {
+            player.ammo--;
+            lastShootTime = Date.now();
+            updateHUD();
+
+            let angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+            let speed = 12;
+            bullets.push({
+                x: player.x,
+                y: player.y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                radius: 5
+            });
+        } else {
+            reloadWeapon();
+        }
+    }
+
+    // Cập nhật vị trí đạn
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i];
+        b.x += b.vx;
+        b.y += b.vy;
+
+        // Xóa đạn khi ra ngoài màn hình
+        if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+            bullets.splice(i, 1);
+        }
+    }
+
+    // Sinh ra Zombie theo thời gian
+    zombieSpawnTimer++;
+    if (zombieSpawnTimer > Math.max(30, 90 - Math.floor(score / 5))) {
+        zombieSpawnTimer = 0;
+        spawnZombie();
+    }
+
+    // Cập nhật Zombie
+    for (let i = zombies.length - 1; i >= 0; i--) {
+        let z = zombies[i];
+        let angle = Math.atan2(player.y - z.y, player.x - z.x);
+        z.x += Math.cos(angle) * z.speed;
+        z.y += Math.sin(angle) * z.speed;
+
+        // Va chạm Zombie với Người chơi
+        let distToPlayer = Math.hypot(player.x - z.x, player.y - z.y);
+        if (distToPlayer < player.radius + z.radius) {
+            player.hp -= 1;
+            updateHUD();
+            if (player.hp <= 0) {
+                endGame();
+            }
+        }
+
+        // Kiểm tra đạn bắn trúng Zombie
+        for (let j = bullets.length - 1; j >= 0; j--) {
+            let b = bullets[j];
+            let dist = Math.hypot(b.x - z.x, b.y - z.y);
+            if (dist < b.radius + z.radius) {
+                z.hp -= 1;
+                bullets.splice(j, 1);
+                
+                // Hiệu ứng máu văng nhỏ
+                for (let p = 0; p < 4; p++) {
+                    particles.push({ x: z.x, y: z.y, vx: (Math.random() - 0.5) * 4, vy: (Math.random() - 0.5) * 4, life: 20, color: '#e74c3c' });
+                }
+
+                if (z.hp <= 0) {
+                    zombies.splice(i, 1);
+                    score += 10;
+                    updateHUD();
+                    break;
+                }
